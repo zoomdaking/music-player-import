@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Player - WiFi Import</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 500px;
+            width: 100%;
+        }
+        h1 {
+            color: #FFD700;
+            font-size: 24px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .connection-panel, .upload-panel {
+            background: #1a1a1a;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .input-group {
+            margin-bottom: 16px;
+        }
+        label {
+            display: block;
+            color: #888;
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+        input {
+            width: 100%;
+            background: #2a2a2a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #fff;
+            font-size: 16px;
+        }
+        input:focus {
+            outline: none;
+            border-color: #FFD700;
+        }
+        button {
+            width: 100%;
+            background: #FFD700;
+            border: none;
+            border-radius: 8px;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: bold;
+            color: #0a0a0a;
+            cursor: pointer;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        button.stop {
+            background: #dc2626;
+            color: #fff;
+        }
+        .status {
+            text-align: center;
+            color: #888;
+            margin-top: 16px;
+        }
+        .status.connected {
+            color: #4CAF50;
+        }
+        .dropzone {
+            border: 2px dashed #333;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+        }
+        .dropzone:hover, .dropzone.dragover {
+            border-color: #FFD700;
+            background: #2a2a2a;
+        }
+        .dropzone-icon { font-size: 48px; margin-bottom: 12px; }
+        .dropzone-text { color: #fff; font-size: 16px; }
+        .dropzone-hint { color: #888; font-size: 14px; margin-top: 8px; }
+        .file-list {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 16px;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #333;
+        }
+        .file-name {
+            flex: 1;
+            color: #fff;
+            font-size: 14px;
+        }
+        .file-size {
+            color: #888;
+            font-size: 12px;
+        }
+        .progress-bar {
+            height: 4px;
+            background: #2a2a2a;
+            border-radius: 2px;
+            margin-top: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #FFD700;
+            transition: width 0.3s;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Music Player Import</h1>
+        
+        <div class="connection-panel" id="connectionPanel">
+            <div class="input-group">
+                <label>Device IP Address</label>
+                <input type="text" id="ipInput" placeholder="192.168.1.10" value="192.168.1.10">
+            </div>
+            <div class="input-group">
+                <label>Port</label>
+                <input type="text" id="portInput" placeholder="8081" value="8081">
+            </div>
+            <div class="input-group">
+                <label>PIN Code</label>
+                <input type="text" id="pinInput" placeholder="000000" maxlength="6">
+            </div>
+            <button id="connectBtn">Connect</button>
+            <div class="status" id="statusText">Enter PIN to connect</div>
+        </div>
+        
+        <div class="upload-panel hidden" id="uploadPanel">
+            <div class="dropzone" id="dropzone">
+                <div class="dropzone-icon">📁</div>
+                <div class="dropzone-text">Drop MP3 files here</div>
+                <div class="dropzone-hint">or click to select</div>
+            </div>
+            <input type="file" id="fileInput" accept=".mp3,audio/mpeg" multiple class="hidden">
+            <div class="file-list" id="fileList"></div>
+            <button class="stop" id="disconnectBtn">Disconnect</button>
+        </div>
+    </div>
+
+    <script>
+        const CHUNK_SIZE = 64 * 1024;
+        let ws = null;
+        let selectedFiles = [];
+        
+        const ipInput = document.getElementById('ipInput');
+        const portInput = document.getElementById('portInput');
+        const pinInput = document.getElementById('pinInput');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const connectionPanel = document.getElementById('connectionPanel');
+        const uploadPanel = document.getElementById('uploadPanel');
+        const statusText = document.getElementById('statusText');
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        
+        connectBtn.addEventListener('click', connect);
+        disconnectBtn.addEventListener('click', disconnect);
+        
+        dropzone.addEventListener('click', () => fileInput.click());
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.mp3'));
+            if (files.length) addFiles(files);
+        });
+        fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files).filter(f => f.name.endsWith('.mp3'));
+            if (files.length) addFiles(files);
+            fileInput.value = '';
+        });
+        
+        function connect() {
+            const ip = ipInput.value.trim();
+            const port = portInput.value.trim();
+            const pin = pinInput.value.trim();
+            
+            if (!ip || !port || !pin) {
+                statusText.textContent = 'Fill all fields';
+                return;
+            }
+            
+            statusText.textContent = 'Connecting...';
+            
+            ws = new WebSocket(`ws://${ip}:${port}`);
+            
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ type: 'auth', pin }));
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'auth_success') {
+                    connectionPanel.classList.add('hidden');
+                    uploadPanel.classList.remove('hidden');
+                }
+            };
+            
+            ws.onclose = (event) => {
+                statusText.textContent = event.code === 4002 ? 'Invalid PIN' : 'Connection closed';
+                statusText.classList.remove('connected');
+                connectionPanel.classList.remove('hidden');
+                uploadPanel.classList.add('hidden');
+            };
+            
+            ws.onerror = () => {
+                statusText.textContent = 'Connection error';
+            };
+        }
+        
+        function disconnect() {
+            if (ws) ws.close();
+            ws = null;
+        }
+        
+        function addFiles(files) {
+            files.forEach(file => {
+                const id = Date.now() + '-' + Math.random();
+                selectedFiles.push({ id, file, progress: 0 });
+            });
+            renderFileList();
+            uploadFiles();
+        }
+        
+        async function uploadFiles() {
+            for (const item of selectedFiles) {
+                if (item.progress === 100) continue;
+                await uploadFile(item);
+            }
+        }
+        
+        async function uploadFile(item) {
+            const file = item.file;
+            const uploadId = item.id;
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            
+            ws.send(JSON.stringify({
+                type: 'file_start',
+                uploadId,
+                fileName: file.name,
+                totalChunks,
+                totalSize: file.size
+            }));
+            
+            let offset = 0;
+            let chunkIndex = 0;
+            
+            while (offset < file.size) {
+                const chunk = file.slice(offset, offset + CHUNK_SIZE);
+                const base64 = await readAsBase64(chunk);
+                
+                ws.send(JSON.stringify({
+                    type: 'file_chunk',
+                    uploadId,
+                    chunkIndex,
+                    chunkData: base64
+                }));
+                
+                offset += CHUNK_SIZE;
+                chunkIndex++;
+                item.progress = (offset / file.size) * 100;
+                renderFileList();
+            }
+            
+            ws.send(JSON.stringify({ type: 'file_end', uploadId }));
+            item.progress = 100;
+            renderFileList();
+        }
+        
+        function readAsBase64(blob) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result.split(',')[1]);
+                reader.readAsDataURL(blob);
+            });
+        }
+        
+        function renderFileList() {
+            fileList.innerHTML = selectedFiles.map(item => `
+                <div class="file-item">
+                    <div style="flex: 1">
+                        <div class="file-name">${item.file.name}</div>
+                        <div class="file-size">${formatSize(item.file.size)}</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${item.progress}%"></div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function formatSize(bytes) {
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+    </script>
+</body>
+</html>
