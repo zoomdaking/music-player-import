@@ -21,6 +21,7 @@
             background: #1a1a1a;
             border-radius: 20px;
             padding: 40px 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
         }
         h1 {
             color: #FFD700;
@@ -48,10 +49,20 @@
             text-align: center;
             letter-spacing: 4px;
             font-weight: bold;
+            transition: all 0.2s;
         }
         input:focus {
             outline: none;
             border-color: #FFD700;
+        }
+        input.error-border {
+            border-color: #dc2626;
+            animation: shake 0.3s ease;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
         }
         button {
             width: 100%;
@@ -64,10 +75,16 @@
             color: #0a0a0a;
             cursor: pointer;
             margin-bottom: 16px;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #e6c200;
+            transform: scale(1.02);
         }
         button:disabled {
             background: #666;
             cursor: not-allowed;
+            transform: none;
         }
         .hint {
             text-align: center;
@@ -76,6 +93,13 @@
         }
         .error {
             color: #dc2626;
+            text-align: center;
+            margin-top: 12px;
+            font-size: 14px;
+            min-height: 40px;
+        }
+        .success {
+            color: #4CAF50;
             text-align: center;
             margin-top: 12px;
             font-size: 14px;
@@ -116,7 +140,7 @@
             </div>
             <div class="input-group">
                 <label>PIN-код</label>
-                <input type="text" id="pinInput" placeholder="000000" maxlength="6" inputmode="numeric">
+                <input type="text" id="pinInput" placeholder="000000" maxlength="6" inputmode="numeric" autocomplete="off">
             </div>
             <button id="connectBtn">Подключиться</button>
             <div class="hint">Введите PIN-код с экрана телефона</div>
@@ -129,44 +153,70 @@
         const pinInput = document.getElementById('pinInput');
         const connectBtn = document.getElementById('connectBtn');
         const errorMsg = document.getElementById('errorMsg');
+        
+        let isConnecting = false;
 
-        // Автофокус на поле PIN
-        pinInput.focus();
+        function showError(message) {
+            errorMsg.textContent = message;
+            errorMsg.className = 'error';
+            pinInput.classList.add('error-border');
+            setTimeout(() => {
+                pinInput.classList.remove('error-border');
+            }, 300);
+        }
 
-        // Обработка Enter
-        pinInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                connect();
-            }
-        });
+        function clearError() {
+            errorMsg.textContent = '';
+            errorMsg.className = 'error';
+        }
 
-        ipInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+        function showSuccess(message) {
+            errorMsg.textContent = message;
+            errorMsg.className = 'success';
+        }
+
+        function clearPin() {
+            pinInput.value = '';
+        }
+
+        function setConnecting(connecting) {
+            isConnecting = connecting;
+            if (connecting) {
+                connectBtn.textContent = 'Подключение...';
+                connectBtn.disabled = true;
+                pinInput.disabled = true;
+                ipInput.disabled = true;
+            } else {
+                connectBtn.textContent = 'Подключиться';
+                connectBtn.disabled = false;
+                pinInput.disabled = false;
+                ipInput.disabled = false;
                 pinInput.focus();
             }
-        });
-
-        connectBtn.addEventListener('click', connect);
+        }
 
         async function connect() {
+            if (isConnecting) return;
+            
             const ip = ipInput.value.trim();
-            const pin = pinInput.value.trim();
+            let pin = pinInput.value.trim();
             
             if (!ip) {
-                errorMsg.textContent = 'Введите IP-адрес';
+                showError('Введите IP-адрес');
+                ipInput.focus();
                 return;
             }
             
-            if (!pin || pin.length !== 6) {
-                errorMsg.textContent = 'Введите 6-значный PIN-код';
+            if (!pin || pin.length !== 6 || !/^\d+$/.test(pin)) {
+                showError('Введите 6-значный PIN-код (только цифры)');
+                clearPin();
+                pinInput.focus();
                 return;
             }
 
-            errorMsg.textContent = '';
-            connectBtn.textContent = 'Подключение...';
-            connectBtn.disabled = true;
+            clearError();
+            setConnecting(true);
 
-            // Пробуем подключиться через fetch для проверки PIN
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -184,21 +234,72 @@
                 clearTimeout(timeoutId);
 
                 if (response.ok) {
-                    // PIN верный - редиректим на локальный сервер
-                    window.location.href = `http://${ip}:8081/?pin=${pin}`;
+                    showSuccess('PIN верный! Перенаправление...');
+                    setTimeout(() => {
+                        window.location.href = `http://${ip}:8081/?pin=${pin}`;
+                    }, 500);
                 } else {
-                    const data = await response.json();
-                    errorMsg.textContent = data.message || 'Неверный PIN-код';
-                    connectBtn.textContent = 'Подключиться';
-                    connectBtn.disabled = false;
+                    let errorText = 'Неверный PIN-код';
+                    try {
+                        const data = await response.json();
+                        errorText = data.message || errorText;
+                    } catch(e) {}
+                    showError(errorText);
+                    clearPin();
+                    setConnecting(false);
+                    pinInput.focus();
                 }
             } catch (error) {
                 console.log('Ошибка подключения:', error);
-                errorMsg.textContent = 'Не удалось подключиться. Проверьте IP и PIN.';
-                connectBtn.textContent = 'Подключиться';
-                connectBtn.disabled = false;
+                let errorMessage = 'Не удалось подключиться. Проверьте:';
+                errorMessage += '\n• Правильный ли IP адрес';
+                errorMessage += '\n• Запущен ли сервер на телефоне';
+                errorMessage += '\n• Телефон и компьютер в одной сети';
+                showError(errorMessage);
+                clearPin();
+                setConnecting(false);
+                pinInput.focus();
             }
         }
+
+        pinInput.addEventListener('input', (e) => {
+            let value = e.target.value.replace(/[^\d]/g, '');
+            if (value.length > 6) value = value.slice(0, 6);
+            pinInput.value = value;
+            
+            clearError();
+            
+            if (value.length === 6) {
+                connect();
+            }
+        });
+
+        pinInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && pinInput.value.length === 6) {
+                connect();
+            } else if (e.key === 'Enter') {
+                connect();
+            }
+        });
+
+        ipInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                pinInput.focus();
+            }
+        });
+
+        connectBtn.addEventListener('click', connect);
+
+        pinInput.focus();
+
+        const savedIp = localStorage.getItem('lastUsedIp');
+        if (savedIp) {
+            ipInput.value = savedIp;
+        }
+
+        ipInput.addEventListener('change', () => {
+            localStorage.setItem('lastUsedIp', ipInput.value.trim());
+        });
     </script>
 </body>
 </html>
